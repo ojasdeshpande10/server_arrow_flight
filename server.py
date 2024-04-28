@@ -9,7 +9,7 @@ class MyFlightServer(flight.FlightServerBase):
 
     def __init__(self, location, **kwargs):
         super().__init__(location, **kwargs)
-        self.embeddings = None  # Instance variable to store embeddings
+        self.embeddings= None  # Instance variable to store embeddings
         self.embeddingcompletion = False
 
 
@@ -35,30 +35,34 @@ class MyFlightServer(flight.FlightServerBase):
         writer.close()
         print("writing closed")
 
-    def getEmbeddings(self, pandas_df):
-        text_data = pandas_df['message'].tolist()
+    def getEmbeddings(self, table):
+        text_data = table.column('message').to_pylist()
         # put model in init
         embedder = Embedder("roberta-base")
-        print("Waiting.......")
-        time.sleep(10) 
-        print("Waiting Done")
         self.embeddings = embedder.embed(text_data)
         print("Embedding generation done")
-
         self.embeddingcompletion = True
     
+    def process_data_demo(self, pandas_df):
+        #text_data = pandas_df['message'].tolist()
+        def add_exclamation(message):
+            return message + '!!!'
+        # Apply the function
+        pandas_df['message'] = pandas_df['message'].apply(add_exclamation)
+        self.processed_df = pandas_df
     def do_put(self, context, descriptor, reader, writer):
         # Example: Read the stream and collect data into a Pandas DataFrame
         table = reader.read_all()
-        pandas_df = table.to_pandas()
-        self.getEmbeddings(pandas_df)
+        # self.getEmbeddings(pandas_df)
+        self.getEmbeddings(table)
     
     def do_get(self, context, ticket):
         # Example data you want to send back
-        embeddings_df = pd.DataFrame(self.embeddings)
-        table = pa.Table.from_pandas(embeddings_df)
+        # embeddings_df = pd.DataFrame(self.embeddings)
+        embeddings_table = pa.Table.from_arrays([pa.array(self.embeddings)], names=['embeddings'])
+        # table = pa.Table.from_pandas(embeddings_table)
         # Send the table back to the client
-        return flight.RecordBatchStream(table)
+        return flight.RecordBatchStream(embeddings_table)
 
 def start_server():
     server = MyFlightServer(('0.0.0.0', 5111))  # Listen on all interfaces
