@@ -3,6 +3,7 @@ from typing import List
 from transformers import AutoModel, AutoTokenizer
 import torch
 from torch.utils.data import DataLoader, Dataset
+import time
 class TextDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer, max_length=512):
         self.texts = texts
@@ -20,14 +21,17 @@ class Embedder:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.model = AutoModel.from_pretrained(model_name_or_path)
         if torch.cuda.is_available():
-            print("GPU available")
             self.model.to("cuda")
+            self.model = self.model.half()
     
     def embed(self, texts:List[str]):
         # Fill in code to generate embeddings
         # inputs = self.tokenizer(text, padding="longest", truncation=True, return_tensors="pt",max_length=512)
+        start_time_tokenizing = time.time()
         dataset = TextDataset(texts, self.tokenizer)
-        dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
+        end_time_tokenizing = time.time()
+        start_time_embedding = time.time()
+        dataloader = DataLoader(dataset, batch_size=256, shuffle=False)
         all_embeddings=[]
         with torch.no_grad():
             for batch in dataloader:
@@ -37,4 +41,5 @@ class Embedder:
                 pooled_embeddings = embeddings.mean(dim=1)
                 pooled_embeddings = pooled_embeddings.cpu().tolist()
                 all_embeddings.extend(pooled_embeddings)
-        return all_embeddings
+        end_time_embedding = time.time()
+        return all_embeddings, (end_time_tokenizing-start_time_tokenizing), (end_time_embedding-start_time_embedding)

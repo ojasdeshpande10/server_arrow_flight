@@ -4,6 +4,7 @@ import pyarrow as pa
 import pandas as pd
 from embed import Embedder
 import time
+import numpy as np
 
 class MyFlightServer(flight.FlightServerBase):
 
@@ -11,8 +12,8 @@ class MyFlightServer(flight.FlightServerBase):
         super().__init__(location, **kwargs)
         self.embeddings= None  # Instance variable to store embeddings
         self.embeddingcompletion = False
-
-
+        self.tokenization_time = 0
+        self.embedding_time = 0
     def do_exchange(self, context, descriptor, reader, writer):
 
         table = reader.read_all()
@@ -39,30 +40,28 @@ class MyFlightServer(flight.FlightServerBase):
         text_data = table.column('message').to_pylist()
         # put model in init
         embedder = Embedder("roberta-base")
-        self.embeddings = embedder.embed(text_data)
-        print("Embedding generation done")
+        self.embeddings, tokenization_time, embedding_time = embedder.embed(text_data)
+        self.tokenization_time = tokenization_time
+        self.embedding_time = embedding_time    
         self.embeddingcompletion = True
-    
-    def process_data_demo(self, pandas_df):
-        #text_data = pandas_df['message'].tolist()
-        def add_exclamation(message):
-            return message + '!!!'
-        # Apply the function
-        pandas_df['message'] = pandas_df['message'].apply(add_exclamation)
-        self.processed_df = pandas_df
     def do_put(self, context, descriptor, reader, writer):
         # Example: Read the stream and collect data into a Pandas DataFrame
-        table = reader.read_all()
-        # self.getEmbeddings(pandas_df)
-        self.getEmbeddings(table)
+        self.table = reader.read_all()
+        self.getEmbeddings(self.table)
     
     def do_get(self, context, ticket):
-        # Example data you want to send back
-        # embeddings_df = pd.DataFrame(self.embeddings)
-        embeddings_table = pa.Table.from_arrays([pa.array(self.embeddings)], names=['embeddings'])
-        # table = pa.Table.from_pandas(embeddings_table)
-        # Send the table back to the client
-        return flight.RecordBatchStream(embeddings_table)
+        updated_table = self.table.append_column('embedding', pa.array(self.embeddings))
+        df = updated_table.to_pandas()
+        result_df = df.groupby('year_datetime').agg({
+            'embedding': lambda x: np.mean(np.vstack([np.array(embedding) for embedding in x]), axis=0).tolist()
+        }).reset_index()
+        result_df = result_df.rename(columns={'year_datetime': 'user_id_yr_week'})
+        result_table = pa.Table.from_pandas(result_df)
+        tokenizing_time = pa.array([self.tokenization_time] * result_table.num_rows, type=pa.float64())
+        embedding_time = pa.array([self.embedding_time] * result_table.num_rows)
+        updated_table = result_table.append_column('tokenization_time', pa.array(tokenizing_time))
+        updated_table = updated_table.append_column('embedding_time', pa.array(embedding_time))
+        return flight.RecordBatchStream(updated_table)
 
 def start_server():
     server = MyFlightServer(('0.0.0.0', 5111))  # Listen on all interfaces
